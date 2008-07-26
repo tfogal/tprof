@@ -1,0 +1,12 @@
+Makefile.in
+configure
+config.guess
+config.sub
+depcomp
+install-sh
+ltmain.sh
+missing
+autom4te.cache
+aclocal.m4
+compile
+.gitignore

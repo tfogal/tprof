@@ -1,0 +1,20 @@
+This is libtprof, a library for profiling applications on GNU/Linux systems.
+
+If you're looking at libtprof, you probably came here by this path:
+
+    * You've tried gcov but wanted more information than just line counts.
+    * You tried gprof but realized it wouldn't profile shared libraries, where
+      a big chunk (or all) of your code lives.
+    * You attempted to use sprof but got a cryptic error message about PLTRELs
+      that you didn't understand.
+
+libtprof is the solution.  You can profile anything with it -- application,
+shared library, VisIt, your toaster if it runs Linux.  No source code
+modifications are required.  Your code runs significantly faster than under
+valgrind.  You can probably get meaningful results out of it in a half hour.
+
+As a quick start:
+    1) install libtprof
+    2) recompile your application (or portions thereof) with the gcc option
+       `-finstrument-functions', and link against libtprof.
+    3) run your application.

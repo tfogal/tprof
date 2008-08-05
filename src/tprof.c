@@ -20,7 +20,6 @@
 
 #define _GNU_SOURCE
 #include <dlfcn.h>
-#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -30,7 +29,7 @@
 struct func {
     void *addr;
     void *caller;
-    uint64_t enter;
+    guint64 enter;
 };
 
 /** Converts two addresses to the input to our hash function.
@@ -46,7 +45,7 @@ struct func {
 static GHashTable *profile;
 static gboolean initialized = FALSE;
 
-static inline uint64_t rdtsc();
+static inline guint64 rdtsc();
 static gboolean func_equal(gconstpointer a, gconstpointer b);
 
 /** Initialize the hash table so we can assume it's values are valid. */
@@ -103,7 +102,7 @@ void
 __cyg_profile_func_exit(void *this_fn, void *call_site)
 {
     Dl_info dl_fqn, dl_caller;
-    uint64_t leave = rdtsc();
+    guint64 leave = rdtsc();
 
     gpointer *f = g_hash_table_lookup(profile,
                                       HASH_INPUT_ADDRV(this_fn, call_site));
@@ -132,12 +131,12 @@ __cyg_profile_func_exit(void *this_fn, void *call_site)
     }
 }
 
-static inline uint64_t
+static inline guint64
 rdtsc()
 {
-    uint32_t lo, hi;
+    guint32 lo, hi;
     __asm__ __volatile__("rdtsc" : "=a" (lo), "=d" (hi));
-    return (uint64_t)hi << 32 | lo;
+    return (guint64)hi << 32 | lo;
 }
 
 static gboolean

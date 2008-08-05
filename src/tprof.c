@@ -41,12 +41,13 @@ static gboolean initialized = FALSE;
 
 static inline guint64 rdtsc();
 static gboolean func_equal(gconstpointer a, gconstpointer b);
+static void g_free_null(gpointer *data, gpointer *user_data);
 
 /** Initialize the hash table so we can assume it's values are valid. */
 void __attribute__((constructor))
 tprof_initialize()
 {
-    profile = g_hash_table_new_full(g_direct_hash, func_equal, NULL, g_free);
+    profile = g_hash_table_new_full(g_direct_hash, func_equal, NULL, NULL);
     initialized = TRUE;
 }
 
@@ -55,20 +56,15 @@ static void __attribute__((destructor))
 tprof_destroy()
 {
     initialized = FALSE;
+    /* FIXME: g_hash_table_foreach (g_slist_destroy on the value) ... */
     g_hash_table_destroy(profile);
 }
 
-/** Inserts the given call into our hash table.
- * Note we assume that the function is not already in the table.  This is most
- * likely true.  However, for recursive functions (or a series of functions
- * with mutual recursion), this scheme totally breaks down.  We will overwrite
- * the older entry with the newer entry, effectively reporting the time of the
- * inner-most call of the given function. */
+/** Inserts the given call into our hash table. */
 void
 __cyg_profile_func_enter(void *this_fn, void *call_site)
 {
-    guint64 *entry = g_malloc(sizeof(guint64));
-
+    guint64 *entry;
     /* This should not be necessary.  Our initialization function is marked
      * with the `constructor' attribute, so it should be called automagically
      * when the loader starts up the program.
@@ -79,10 +75,15 @@ __cyg_profile_func_enter(void *this_fn, void *call_site)
         tprof_initialize();
     }
 
-    /* We do the insert and THEN record the time into the structure; we have no
-     * idea how expensive the insert will be, and we want to get the timing
+    GSList *entries = (GSList *)
+        g_hash_table_lookup(profile, HASH_INPUT_ADDRV(this_fn, call_site));
+    entry = g_malloc(sizeof(guint64));
+    entries = g_slist_prepend(entries, entry);
+    
+    /* We do the insert and THEN record the time into the structure; our
+     * instrumentation might have been expensive, and we want to get the timing
      * differences with as little overhead as possible. */
-    g_hash_table_insert(profile, HASH_INPUT_ADDRV(this_fn, call_site), entry);
+    g_hash_table_insert(profile, HASH_INPUT_ADDRV(this_fn, call_site), entries);
     *entry = rdtsc();
 }
 
@@ -94,9 +95,9 @@ __cyg_profile_func_exit(void *this_fn, void *call_site)
     Dl_info dl_fqn, dl_caller;
     guint64 leave = rdtsc();
 
-    gpointer *d = g_hash_table_lookup(profile,
-                                      HASH_INPUT_ADDRV(this_fn, call_site));
-    guint64 *enter = (guint64 *) d;
+    GSList *entries = (GSList *)
+        g_hash_table_lookup(profile, HASH_INPUT_ADDRV(this_fn, call_site));
+    guint64 *enter = (guint64*) entries->data;
 
     /* Now lookup the symbol name. */
     if(dladdr(this_fn, &dl_fqn) == 0 || dladdr(call_site, &dl_caller) == 0) {
@@ -115,10 +116,12 @@ __cyg_profile_func_exit(void *this_fn, void *call_site)
                leave - *enter);
     }
 
-    if(g_hash_table_remove(profile, HASH_INPUT_ADDRV(this_fn, call_site))
-       != TRUE) {
-        g_error("Could not remove function from internal hash.");
-    }
+    /* Interestingly, we don't need to do an explicit HT removal.  We simply
+     * pop the head off the list and then re-hash the list.  We'll insert a
+     * NULL into the hash if the list empties! */
+    g_free(entries->data);
+    entries = g_slist_remove(entries, entries);
+    g_hash_table_insert(profile, HASH_INPUT_ADDRV(this_fn, call_site), entries);
 }
 
 static inline guint64
@@ -131,3 +134,11 @@ rdtsc()
 
 static gboolean
 func_equal(gconstpointer a, gconstpointer b) { return a == b; }
+
+/** g_free but takes an extra parameter which is not used.  This gives us
+ * g_free in a GFunc-compatible interface. */
+static void
+g_free_null(gpointer *data, G_GNUC_UNUSED gpointer *user_data)
+{
+    g_free(data);
+}

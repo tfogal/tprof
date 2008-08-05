@@ -26,12 +26,6 @@
 
 #include <glib.h>
 
-struct func {
-    void *addr;
-    void *caller;
-    guint64 enter;
-};
-
 /** Converts two addresses to the input to our hash function.
  * We want to hash on both the function address plus the address of the call
  * site.  We get them as void ptrs, so they must be cast before we can
@@ -42,7 +36,7 @@ struct func {
        (gpointer)(_ca + _cb); })
 
 /** Profiling data will be stored in this table. */
-static GHashTable *profile;
+static GHashTable *profile = NULL;
 static gboolean initialized = FALSE;
 
 static inline guint64 rdtsc();
@@ -53,7 +47,6 @@ void __attribute__((constructor))
 tprof_initialize()
 {
     profile = g_hash_table_new_full(g_direct_hash, func_equal, NULL, g_free);
-    puts("tprof startup ..");
     initialized = TRUE;
 }
 
@@ -74,9 +67,7 @@ tprof_destroy()
 void
 __cyg_profile_func_enter(void *this_fn, void *call_site)
 {
-    struct func *fqn = g_malloc(sizeof(struct func));
-    fqn->addr = this_fn;
-    fqn->caller = call_site;
+    guint64 *entry = g_malloc(sizeof(guint64));
 
     /* This should not be necessary.  Our initialization function is marked
      * with the `constructor' attribute, so it should be called automagically
@@ -91,10 +82,9 @@ __cyg_profile_func_enter(void *this_fn, void *call_site)
     /* We do the insert and THEN record the time into the structure; we have no
      * idea how expensive the insert will be, and we want to get the timing
      * differences with as little overhead as possible. */
-    g_hash_table_insert(profile, HASH_INPUT_ADDRV(this_fn, call_site), fqn);
-    fqn->enter = rdtsc();
+    g_hash_table_insert(profile, HASH_INPUT_ADDRV(this_fn, call_site), entry);
+    *entry = rdtsc();
 }
-
 
 /** Finds the given function in our table.  Outputs the time difference between
  * then and now. */
@@ -104,9 +94,9 @@ __cyg_profile_func_exit(void *this_fn, void *call_site)
     Dl_info dl_fqn, dl_caller;
     guint64 leave = rdtsc();
 
-    gpointer *f = g_hash_table_lookup(profile,
+    gpointer *d = g_hash_table_lookup(profile,
                                       HASH_INPUT_ADDRV(this_fn, call_site));
-    struct func *fqn = (struct func *) f;
+    guint64 *enter = (guint64 *) d;
 
     /* Now lookup the symbol name. */
     if(dladdr(this_fn, &dl_fqn) == 0 || dladdr(call_site, &dl_caller) == 0) {
@@ -115,14 +105,14 @@ __cyg_profile_func_exit(void *this_fn, void *call_site)
 
     /* FIXME this should be changed to async file i/o; terminal i/o is slow. */
     if(strcmp(dl_fqn.dli_fname, dl_caller.dli_fname) == 0) {
-        printf("%lld units: %s from %s (%s)\n", leave - fqn->enter,
+        printf("%lld units: %s from %s (%s)\n", leave - *enter,
                dl_fqn.dli_sname, dl_caller.dli_sname,
                dl_fqn.dli_fname);
     } else {
         printf("%s(%s) from %s(%s): %lld units.\n",
                dl_fqn.dli_sname, dl_fqn.dli_fname,
                dl_caller.dli_sname, dl_caller.dli_fname,
-               leave - fqn->enter);
+               leave - *enter);
     }
 
     if(g_hash_table_remove(profile, HASH_INPUT_ADDRV(this_fn, call_site))

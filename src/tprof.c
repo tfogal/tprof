@@ -113,10 +113,9 @@ __cyg_profile_func_exit(void *this_fn, void *call_site)
                dl_fqn.dli_sname, dl_caller.dli_sname,
                dl_fqn.dli_fname);
     } else {
-        printf("%s(%s) from %s(%s): %lld units.\n",
+        printf("%lld units: %s(%s) from %s(%s)\n", leave - *enter,
                dl_fqn.dli_sname, dl_fqn.dli_fname,
-               dl_caller.dli_sname, dl_caller.dli_fname,
-               leave - *enter);
+               dl_caller.dli_sname, dl_caller.dli_fname);
     }
 
     /* Interestingly, we don't need to do an explicit HT removal.  We simply

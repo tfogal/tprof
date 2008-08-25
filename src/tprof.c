@@ -26,8 +26,10 @@
 
 #include <glib.h>
 
+#include "attributes.h"
+
 /** Converts two addresses to the input to our hash function.
- * We want to hash on both the function address plus the address of the call
+ * We want to hash on both the function address and the address of the call
  * site.  We get them as void ptrs, so they must be cast before we can
  * meaningfully combine them. */
 #define HASH_INPUT_ADDRV(a,b)                \
@@ -41,13 +43,13 @@ static gboolean initialized = FALSE;
 
 static inline guint64 rdtsc();
 static gboolean func_equal(gconstpointer a, gconstpointer b);
-static void g_free_null(gpointer *data, gpointer *user_data);
+static void _free_chain(gpointer key, gpointer value,  gpointer user_data);
 
 /** Initialize the hash table so we can assume it's values are valid. */
 void __attribute__((constructor))
 tprof_initialize()
 {
-    profile = g_hash_table_new_full(g_direct_hash, func_equal, NULL, NULL);
+    profile = g_hash_table_new(g_direct_hash, func_equal);
     initialized = TRUE;
 }
 
@@ -56,7 +58,7 @@ static void __attribute__((destructor))
 tprof_destroy()
 {
     initialized = FALSE;
-    /* FIXME: g_hash_table_foreach (g_slist_destroy on the value) ... */
+    g_hash_table_foreach(profile, _free_chain, NULL);
     g_hash_table_destroy(profile);
 }
 
@@ -71,7 +73,7 @@ __cyg_profile_func_enter(void *this_fn, void *call_site)
      * However, this simply isn't happening inside VisIt, for reasons I don't
      * currently fathom.  Therefore we have a branch here and check if the
      * library has been initialized, and initialize it if so ... */
-    if(initialized == FALSE) {
+    if(unlikely(initialized == FALSE)) {
         tprof_initialize();
     }
 
@@ -97,6 +99,7 @@ __cyg_profile_func_exit(void *this_fn, void *call_site)
 
     GSList *entries = (GSList *)
         g_hash_table_lookup(profile, HASH_INPUT_ADDRV(this_fn, call_site));
+    g_assert(entries);
     guint64 *enter = (guint64*) entries->data;
 
     /* Now lookup the symbol name. */
@@ -118,10 +121,16 @@ __cyg_profile_func_exit(void *this_fn, void *call_site)
 
     /* Interestingly, we don't need to do an explicit HT removal.  We simply
      * pop the head off the list and then re-hash the list.  We'll insert a
-     * NULL into the hash if the list empties! */
+     * NULL into the hash if the list empties -- which is equivalent to saying
+     * the hash doesn't exist!  Perfect. */
+    GSList *newhead = g_slist_next(entries);
+    g_hash_table_insert(profile, HASH_INPUT_ADDRV(this_fn, call_site), newhead);
+
+    /* Remove the data and set it to NULL.  It must be nullified so that
+     * _free_chain (called at program exit) knows not to free it again. */
     g_free(entries->data);
-    entries = g_slist_remove(entries, entries);
-    g_hash_table_insert(profile, HASH_INPUT_ADDRV(this_fn, call_site), entries);
+    entries->data = NULL;
+    g_slist_free_1(entries); /* ... and, of course, delete the old head. */
 }
 
 static inline guint64
@@ -135,10 +144,23 @@ rdtsc()
 static gboolean
 func_equal(gconstpointer a, gconstpointer b) { return a == b; }
 
-/** g_free but takes an extra parameter which is not used.  This gives us
- * g_free in a GFunc-compatible interface. */
+/** This makes sure al the memory is cleaned up from a given element in the
+ * hash table.  The second parameter is assumed to be the head of a GSList
+ * (potentially null, for the empty list).  This iterates over the list and
+ * free's all the data pointers.  Finally, it deletes the list altogether. */
 static void
-g_free_null(gpointer *data, G_GNUC_UNUSED gpointer *user_data)
+_free_chain(G_GNUC_UNUSED gpointer key, gpointer value,
+            G_GNUC_UNUSED gpointer user_data)
 {
-    g_free(data);
+    GSList *list = (GSList *) value;
+    GSList *elem = list;
+    /* Yes, we iterate over the list twice; once right now, and then
+     * g_slist_free will do it's own iteration.  We could fairly easily
+     * implement this in one pass, but this is only called at the end of
+     * program execution anyway. */
+    while(elem) {
+        g_free(elem->data);
+        elem = g_slist_next(elem);
+    }
+    g_slist_free(list);
 }

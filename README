@@ -18,3 +18,12 @@ As a quick start:
     2) recompile your application (or portions thereof) with the gcc option
        `-finstrument-functions', and link against libtprof.
     3) run your application.
+
+It should be safe to *always* link against libtprof.  No libtprof code will be
+executed if you omit `-finstrument-functions' from your compilation flags.
+Still the author recommends that you use -Wl,--as-needed in your LDFLAGS, and
+discourages such use in `release' builds.
+
+The libtprof website is currently at:
+
+    http://cs.unh.edu/~tfogal/tprof/
